@@ -1,0 +1,69 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - Debug
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode Version
+        run: xcodebuild -version
+
+      - name: Build Archive (No Signing)
+        run: |
+          xcodebuild archive \
+            -workspace LLMFarm.xcworkspace \
+            -scheme LLMFarm \
+            -configuration ${{ inputs.build_type }} \
+            -archivePath build/LLMFarm.xcarchive \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_BITCODE=NO
+
+      - name: Export IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R build/LLMFarm.xcarchive/Products/Applications/*.app build/Payload/
+          cd build && zip -r ../LLMFarm_${{ inputs.build_type }}.ipa Payload && cd ..
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMFarm-${{ inputs.build_type }}-IPA
+          path: LLMFarm_${{ inputs.build_type }}.ipa
+
+      - name: Create Release Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Type:** ${{ inputs.build_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Signing:** Unsigned (Ready for TrollStore)" >> $GITHUB_STEP_SUMMARY
+          echo "**IPA Location:** Check Artifacts section below" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installation" >> $GITHUB_STEP_SUMMARY
+          echo "1. Download the IPA from Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "2. Open TrollStore on your device" >> $GITHUB_STEP_SUMMARY
+          echo "3. Tap the '+' button to install IPA" >> $GITHUB_STEP_SUMMARY
