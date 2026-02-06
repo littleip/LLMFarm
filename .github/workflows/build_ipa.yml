@@ -28,23 +28,17 @@ jobs:
           # 1. 进入 llama.cpp 目录
           cd llmfarm_core.swift/llama.cpp
           
-          echo "Applying patches to CMakeLists.txt to prevent executable errors..."
-          # 暴力注释掉不需要的子目录，防止 MACOSX_BUNDLE 报错
-          # 使用 sed 直接修改文件
+          # 2. 暴力修复 CMakeLists.txt (防止 example 报错)
           sed -i '' 's/add_subdirectory(examples)/#add_subdirectory(examples)/g' CMakeLists.txt
           sed -i '' 's/add_subdirectory(pocs)/#add_subdirectory(pocs)/g' CMakeLists.txt
           sed -i '' 's/add_subdirectory(tests)/#add_subdirectory(tests)/g' CMakeLists.txt
-          # 如果有 tools 目录，也注释掉 (较新版本才有)
           if grep -q "add_subdirectory(tools)" CMakeLists.txt; then
             sed -i '' 's/add_subdirectory(tools)/#add_subdirectory(tools)/g' CMakeLists.txt
           fi
 
-          # 2. 创建构建目录
+          # 3. 编译静态库
           mkdir -p build-ios
           cd build-ios
-          
-          # 3. 配置 CMake
-          # 我们只需要静态库，关闭所有额外功能
           cmake .. \
             -G Xcode \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -56,37 +50,19 @@ jobs:
             -DGGML_METAL=ON \
             -DBUILD_SHARED_LIBS=OFF
 
-          # 4. 编译所有目标
-          # 不指定 target，编译默认目标（由于注释了 examples，默认只会编译库）
           cmake --build . --config Release
           
-          # 5. 合并库文件 (关键步骤)
+          # 4. 合并库文件并制作 XCFramework
           cd ..
           OUTPUT_DIR="build-apple"
           mkdir -p "$OUTPUT_DIR"
           
-          echo "Merging static libraries..."
-          # 找到所有编译出来的 .a 文件 (llama, ggml, ggml-cpu, ggml-metal 等)
-          # 排除掉可能存在的无关文件
           LIB_FILES=$(find build-ios -name "*.a" ! -name "libcheck.a")
-          
-          if [ -z "$LIB_FILES" ]; then
-            echo "Error: No static libraries found!"
-            ls -R build-ios
-            exit 1
-          fi
-          
-          echo "Found libraries: $LIB_FILES"
-          
-          # 使用 libtool 合并所有 .a 为一个 libllama_combined.a
           libtool -static -o build-ios/libllama_combined.a $LIB_FILES
           
-          # 6. 制作 XCFramework
-          echo "Creating XCFramework..."
           mkdir -p "$OUTPUT_DIR/llama.xcframework/ios-arm64"
           cp "build-ios/libllama_combined.a" "$OUTPUT_DIR/llama.xcframework/ios-arm64/llama"
           
-          # 写入 Info.plist
           cat > "$OUTPUT_DIR/llama.xcframework/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -116,15 +92,29 @@ jobs:
           </dict>
           </plist>
           EOF
-          
-          echo "XCFramework created successfully."
 
-      - name: Build Main Project (No Signing)
+      - name: Build Main Project (Fixed Workspace)
         run: |
           mkdir build
           
-          # 使用 clean build 确保没有缓存干扰
-          xcodebuild clean build \
+          # 关键修改：检查是否存在 workspace，如果存在则优先使用
+          # 这通常能解决找不到 Scheme 的问题
+          if [ -d "LLMFarm.xcworkspace" ]; then
+             echo "Found Workspace, using it."
+             BUILD_ARG="-workspace LLMFarm.xcworkspace"
+          else
+             echo "No Workspace found, falling back to Project."
+             BUILD_ARG="-project LLMFarm.xcodeproj"
+          fi
+          
+          # 调试步骤：列出所有 Scheme，确保 'LLMFarm' 真的存在
+          echo "Listing schemes..."
+          xcodebuild -list $BUILD_ARG
+          
+          # 开始编译
+          # -allowProvisioningUpdates: 尝试自动修复部分配置问题
+          xcodebuild build \
+            $BUILD_ARG \
             -scheme LLMFarm \
             -destination "generic/platform=iOS" \
             -configuration Release \
