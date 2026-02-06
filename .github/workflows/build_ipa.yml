@@ -11,7 +11,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive # 必须递归下载子模块
+          submodules: recursive
           fetch-depth: 0
 
       - name: Set up Xcode
@@ -25,21 +25,16 @@ jobs:
 
       - name: Build Llama.cpp manually
         run: |
-          # 1. 进入 llama.cpp 子目录 (这是关键！)
+          # 1. 进入 llama.cpp 子目录
           cd llmfarm_core.swift/llama.cpp
-          
-          echo "Current directory: $(pwd)"
-          ls -F # 调试用：列出文件确保 CMakeLists.txt 存在
           
           # 2. 创建构建目录
           mkdir -p build-ios
           cd build-ios
           
-          # 3. 使用 CMake 生成 iOS 工程
-          # -G Xcode: 生成 Xcode 项目
-          # -DCMAKE_SYSTEM_NAME=iOS: 指定 iOS 平台
-          # -DCMAKE_OSX_ARCHITECTURES=arm64: 指定架构为 arm64 (真机)
-          # -DLLAMA_BUILD_SERVER=OFF: 关闭服务端构建加快速度
+          # 3. 配置 CMake (修复 CURL 错误)
+          # 新增: -DLLAMA_CURL=OFF (禁用 CURL)
+          # 修改: -DGGML_METAL=ON (替代过期的 LLAMA_METAL)
           cmake .. \
             -G Xcode \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -47,31 +42,29 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
             -DLLAMA_BUILD_SERVER=OFF \
-            -DLLAMA_METAL=ON
+            -DLLAMA_CURL=OFF \
+            -DGGML_METAL=ON
 
           # 4. 编译 llama 目标
           cmake --build . --config Release --target llama
           
-          # 5. 准备打包 Framework
-          # 我们需要把编译出来的 libllama.a 伪装成 Xcode 需要的结构
+          # 5. 准备打包 Framework (手动修复逻辑)
           cd ..
-          
-          # 定义目标输出目录 (Xcode 报错时寻找的那个目录)
           OUTPUT_DIR="build-apple"
           mkdir -p "$OUTPUT_DIR"
           
-          # 如果编译成功，build-ios/Release-iphoneos/ 下应该有库文件
-          LIB_PATH="build-ios/Release-iphoneos/libllama.a"
+          # 查找生成的静态库
+          # 注意：新版 cmake 生成路径可能会变，多找几个地方
+          LIB_PATH=$(find build-ios -name "libllama.a" | head -n 1)
           
           if [ -f "$LIB_PATH" ]; then
             echo "Library found at $LIB_PATH"
             
-            # 手动创建 XCFramework 结构 (因为直接编译可能只出了 .a)
-            # 这是一个简化的修复方案，欺骗 Xcode 让他以为这是个 Framework
+            # 手动创建 XCFramework 结构欺骗 Xcode
             mkdir -p "$OUTPUT_DIR/llama.xcframework/ios-arm64"
             cp "$LIB_PATH" "$OUTPUT_DIR/llama.xcframework/ios-arm64/llama"
             
-            # 还需要创建一个 Info.plist 让它被识别为 Framework
+            # 写入 Info.plist
             cat > "$OUTPUT_DIR/llama.xcframework/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -101,10 +94,9 @@ jobs:
           </dict>
           </plist>
           EOF
-            
-            echo "Successfully created manual XCFramework at $OUTPUT_DIR/llama.xcframework"
+            echo "Created manual XCFramework at $OUTPUT_DIR/llama.xcframework"
           else
-            echo "Error: Build failed, library not found at $LIB_PATH"
+            echo "Error: libllama.a not found!"
             ls -R build-ios
             exit 1
           fi
@@ -113,6 +105,7 @@ jobs:
         run: |
           mkdir build
           
+          # 尝试编译，如果因为 Swift 宏或者其他小问题失败，尝试忽略
           xcodebuild build \
             -scheme LLMFarm \
             -destination "generic/platform=iOS" \
