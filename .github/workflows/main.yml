@@ -56,6 +56,12 @@ jobs:
         run: |
           xcodebuild -list -project LLMFarm.xcodeproj
 
+      - name: Fix App Shortcuts
+        run: |
+          # Fix App Shortcuts utterance to include ${applicationName}
+          sed -i '' 's/"Ask Local LLM"/"Ask \${applicationName} LLM"/g' LLMFarm/Intents/LLMFarmShortcuts.swift
+          cat LLMFarm/Intents/LLMFarmShortcuts.swift
+
       - name: Build Archive (No Signing)
         run: |
           xcodebuild archive \
