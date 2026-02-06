@@ -23,15 +23,16 @@ jobs:
         run: |
           brew install cmake ninja
 
-      - name: Build Llama.cpp (Nuclear Option)
+      - name: Build Llama.cpp (Static Libs)
         run: |
           # 1. 进入 llama.cpp 目录
           cd llmfarm_core.swift/llama.cpp
           
-          # 2. 暴力修复 CMakeLists.txt (防止 example 报错)
+          # 2. 暴力屏蔽 Examples 防止报错
           sed -i '' 's/add_subdirectory(examples)/#add_subdirectory(examples)/g' CMakeLists.txt
           sed -i '' 's/add_subdirectory(pocs)/#add_subdirectory(pocs)/g' CMakeLists.txt
           sed -i '' 's/add_subdirectory(tests)/#add_subdirectory(tests)/g' CMakeLists.txt
+          # 尝试屏蔽 tools
           if grep -q "add_subdirectory(tools)" CMakeLists.txt; then
             sed -i '' 's/add_subdirectory(tools)/#add_subdirectory(tools)/g' CMakeLists.txt
           fi
@@ -50,19 +51,29 @@ jobs:
             -DGGML_METAL=ON \
             -DBUILD_SHARED_LIBS=OFF
 
+          # 编译所有库文件
           cmake --build . --config Release
           
-          # 4. 合并库文件并制作 XCFramework
+          # 4. 合并库文件 (关键步骤)
           cd ..
           OUTPUT_DIR="build-apple"
           mkdir -p "$OUTPUT_DIR"
           
+          # 搜索所有生成的 .a 文件
           LIB_FILES=$(find build-ios -name "*.a" ! -name "libcheck.a")
+          if [ -z "$LIB_FILES" ]; then
+             echo "Error: No static libraries found. Build failed."
+             exit 1
+          fi
+          
+          # 合并为一个大的 libllama.a
           libtool -static -o build-ios/libllama_combined.a $LIB_FILES
           
+          # 制作 XCFramework 结构
           mkdir -p "$OUTPUT_DIR/llama.xcframework/ios-arm64"
           cp "build-ios/libllama_combined.a" "$OUTPUT_DIR/llama.xcframework/ios-arm64/llama"
           
+          # 写入 Info.plist
           cat > "$OUTPUT_DIR/llama.xcframework/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -93,30 +104,21 @@ jobs:
           </plist>
           EOF
 
-      - name: Build Main Project (Fixed Workspace)
+      - name: Debug Project Targets
+        run: |
+          # 这一步是为了看清楚到底有哪些 Target，方便出错时排查
+          xcodebuild -list -project LLMFarm.xcodeproj
+
+      - name: Build Main Project (Target Mode)
         run: |
           mkdir build
           
-          # 关键修改：检查是否存在 workspace，如果存在则优先使用
-          # 这通常能解决找不到 Scheme 的问题
-          if [ -d "LLMFarm.xcworkspace" ]; then
-             echo "Found Workspace, using it."
-             BUILD_ARG="-workspace LLMFarm.xcworkspace"
-          else
-             echo "No Workspace found, falling back to Project."
-             BUILD_ARG="-project LLMFarm.xcodeproj"
-          fi
-          
-          # 调试步骤：列出所有 Scheme，确保 'LLMFarm' 真的存在
-          echo "Listing schemes..."
-          xcodebuild -list $BUILD_ARG
-          
-          # 开始编译
-          # -allowProvisioningUpdates: 尝试自动修复部分配置问题
+          # 核心修改：使用 -target LLMFarm 而不是 -scheme
+          # 这样可以绕过 Scheme 缺失的问题
           xcodebuild build \
-            $BUILD_ARG \
-            -scheme LLMFarm \
-            -destination "generic/platform=iOS" \
+            -project LLMFarm.xcodeproj \
+            -target LLMFarm \
+            -sdk iphoneos \
             -configuration Release \
             -derivedDataPath build \
             CODE_SIGN_IDENTITY="" \
@@ -126,13 +128,23 @@ jobs:
 
       - name: Package IPA
         run: |
-          cd build/Build/Products/Release-iphoneos
+          # 注意：使用 -target 编译时，输出路径可能略有不同，我们用 find 来找 .app
+          APP_PATH=$(find build/Build/Products -name "LLMFarm.app" | head -n 1)
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: LLMFarm.app not found!"
+            ls -R build/Build/Products
+            exit 1
+          fi
+          
+          echo "Found App at: $APP_PATH"
+          
           mkdir Payload
-          cp -r LLMFarm.app Payload/
+          cp -r "$APP_PATH" Payload/
           zip -r LLMFarm_TrollStore.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: LLMFarm_IPA
-          path: build/Build/Products/Release-iphoneos/LLMFarm_TrollStore.ipa
+          path: LLMFarm_TrollStore.ipa
