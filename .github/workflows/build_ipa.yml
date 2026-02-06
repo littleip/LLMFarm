@@ -23,19 +23,28 @@ jobs:
         run: |
           brew install cmake ninja
 
-      - name: Build Llama.cpp manually
+      - name: Build Llama.cpp (Nuclear Option)
         run: |
-          # 1. 进入 llama.cpp 子目录
+          # 1. 进入 llama.cpp 目录
           cd llmfarm_core.swift/llama.cpp
           
+          echo "Applying patches to CMakeLists.txt to prevent executable errors..."
+          # 暴力注释掉不需要的子目录，防止 MACOSX_BUNDLE 报错
+          # 使用 sed 直接修改文件
+          sed -i '' 's/add_subdirectory(examples)/#add_subdirectory(examples)/g' CMakeLists.txt
+          sed -i '' 's/add_subdirectory(pocs)/#add_subdirectory(pocs)/g' CMakeLists.txt
+          sed -i '' 's/add_subdirectory(tests)/#add_subdirectory(tests)/g' CMakeLists.txt
+          # 如果有 tools 目录，也注释掉 (较新版本才有)
+          if grep -q "add_subdirectory(tools)" CMakeLists.txt; then
+            sed -i '' 's/add_subdirectory(tools)/#add_subdirectory(tools)/g' CMakeLists.txt
+          fi
+
           # 2. 创建构建目录
           mkdir -p build-ios
           cd build-ios
           
-          # 3. 配置 CMake (核心修复点)
-          # -DLLAMA_BUILD_EXAMPLES=OFF: 关闭示例编译 (解决报错的关键)
-          # -DLLAMA_BUILD_TESTS=OFF: 关闭测试
-          # -DLLAMA_CURL=OFF: 关闭 CURL 依赖
+          # 3. 配置 CMake
+          # 我们只需要静态库，关闭所有额外功能
           cmake .. \
             -G Xcode \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -45,29 +54,40 @@ jobs:
             -DLLAMA_BUILD_SERVER=OFF \
             -DLLAMA_CURL=OFF \
             -DGGML_METAL=ON \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DLLAMA_BUILD_TESTS=OFF
+            -DBUILD_SHARED_LIBS=OFF
 
-          # 4. 编译 llama 目标
-          cmake --build . --config Release --target llama
+          # 4. 编译所有目标
+          # 不指定 target，编译默认目标（由于注释了 examples，默认只会编译库）
+          cmake --build . --config Release
           
-          # 5. 准备打包 Framework
+          # 5. 合并库文件 (关键步骤)
           cd ..
           OUTPUT_DIR="build-apple"
           mkdir -p "$OUTPUT_DIR"
           
-          # 查找生成的静态库
-          LIB_PATH=$(find build-ios -name "libllama.a" | head -n 1)
+          echo "Merging static libraries..."
+          # 找到所有编译出来的 .a 文件 (llama, ggml, ggml-cpu, ggml-metal 等)
+          # 排除掉可能存在的无关文件
+          LIB_FILES=$(find build-ios -name "*.a" ! -name "libcheck.a")
           
-          if [ -f "$LIB_PATH" ]; then
-            echo "Library found at $LIB_PATH"
-            
-            # 手动创建 XCFramework 结构欺骗 Xcode
-            mkdir -p "$OUTPUT_DIR/llama.xcframework/ios-arm64"
-            cp "$LIB_PATH" "$OUTPUT_DIR/llama.xcframework/ios-arm64/llama"
-            
-            # 写入 Info.plist
-            cat > "$OUTPUT_DIR/llama.xcframework/Info.plist" <<EOF
+          if [ -z "$LIB_FILES" ]; then
+            echo "Error: No static libraries found!"
+            ls -R build-ios
+            exit 1
+          fi
+          
+          echo "Found libraries: $LIB_FILES"
+          
+          # 使用 libtool 合并所有 .a 为一个 libllama_combined.a
+          libtool -static -o build-ios/libllama_combined.a $LIB_FILES
+          
+          # 6. 制作 XCFramework
+          echo "Creating XCFramework..."
+          mkdir -p "$OUTPUT_DIR/llama.xcframework/ios-arm64"
+          cp "build-ios/libllama_combined.a" "$OUTPUT_DIR/llama.xcframework/ios-arm64/llama"
+          
+          # 写入 Info.plist
+          cat > "$OUTPUT_DIR/llama.xcframework/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -96,18 +116,15 @@ jobs:
           </dict>
           </plist>
           EOF
-            echo "Created manual XCFramework at $OUTPUT_DIR/llama.xcframework"
-          else
-            echo "Error: libllama.a not found!"
-            ls -R build-ios
-            exit 1
-          fi
+          
+          echo "XCFramework created successfully."
 
       - name: Build Main Project (No Signing)
         run: |
           mkdir build
           
-          xcodebuild build \
+          # 使用 clean build 确保没有缓存干扰
+          xcodebuild clean build \
             -scheme LLMFarm \
             -destination "generic/platform=iOS" \
             -configuration Release \
