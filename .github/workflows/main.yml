@@ -33,7 +33,7 @@ jobs:
       - name: Build llama.xcframework
         run: |
           chmod +x build-xcframework_cpu.sh
-          ./build-xcframework_cpu.sh
+          cd llmfarm_core.swift/llama.cpp && bash ../../build-xcframework_cpu.sh
 
       - name: Build Archive (No Signing)
         run: |
