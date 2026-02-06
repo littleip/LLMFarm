@@ -30,14 +30,31 @@ jobs:
       - name: Show Xcode Version
         run: xcodebuild -version
 
-      - name: List Available Schemes
-        run: |
-          xcodebuild -list -project LLMFarm.xcodeproj
-
       - name: Build llama.xcframework
         run: |
           chmod +x build-xcframework_cpu.sh
           cd llmfarm_core.swift/llama.cpp && bash ../../build-xcframework_cpu.sh
+
+      - name: Verify xcframework
+        run: |
+          echo "Checking if xcframework exists..."
+          ls -la llmfarm_core.swift/llama.cpp/build-apple/
+          echo ""
+          echo "Checking xcframework contents..."
+          if [ -d "llmfarm_core.swift/llama.cpp/build-apple/llama.xcframework" ]; then
+            echo "xcframework directory exists"
+            ls -la llmfarm_core.swift/llama.cpp/build-apple/llama.xcframework/
+            echo ""
+            echo "Checking for binary..."
+            find llmfarm_core.swift/llama.cpp/build-apple/llama.xcframework/ -name "llama" -type f
+          else
+            echo "ERROR: xcframework not found!"
+            exit 1
+          fi
+
+      - name: List Available Schemes
+        run: |
+          xcodebuild -list -project LLMFarm.xcodeproj
 
       - name: Build Archive (No Signing)
         run: |
