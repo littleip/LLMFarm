@@ -1,0 +1,59 @@
+name: Build LLMFarm for TrollStore
+
+on:
+  workflow_dispatch: # 允许手动点击按钮触发
+
+jobs:
+  build:
+    runs-on: macos-14 # 使用较新的 macOS 以支持新版 Xcode (LLMFarm 需要新版 Swift)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive # 必须递归下载子模块，否则编译会报错
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable # 使用最新的稳定版 Xcode
+
+      - name: Build Project (No Signing)
+        run: |
+          # 创建输出目录
+          mkdir build
+          
+          # 使用 xcodebuild 进行编译
+          # 关键参数：
+          # CODE_SIGNING_ALLOWED=NO: 禁止签名
+          # CODE_SIGNING_REQUIRED=NO: 不需要签名
+          # -destination "generic/platform=iOS": 指定构建 iOS 设备版本（非模拟器）
+          
+          xcodebuild build \
+            -scheme LLMFarm \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package IPA
+        run: |
+          # 进入构建产物目录
+          cd build/Build/Products/Release-iphoneos
+          
+          # 创建 Payload 文件夹 (IPA 的标准结构)
+          mkdir Payload
+          
+          # 将 .app 复制到 Payload 中
+          cp -r LLMFarm.app Payload/
+          
+          # 压缩成 .ipa 文件
+          zip -r LLMFarm_TrollStore.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMFarm_IPA
+          path: build/Build/Products/Release-iphoneos/LLMFarm_TrollStore.ipa
