@@ -30,9 +30,10 @@ jobs:
       - name: Show Xcode Version
         run: xcodebuild -version
 
-      - name: List Available Schemes
+      - name: Build llama.xcframework
         run: |
-          xcodebuild -list -project LLMFarm.xcodeproj
+          chmod +x build-xcframework_cpu.sh
+          ./build-xcframework_cpu.sh
 
       - name: Build Archive (No Signing)
         run: |
