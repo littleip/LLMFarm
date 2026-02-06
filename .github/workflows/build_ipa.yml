@@ -19,43 +19,97 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Install Dependencies (CMake & Ninja)
+      - name: Install Dependencies
         run: |
           brew install cmake ninja
 
-      - name: Build Llama Core (Fix Missing Binary)
+      - name: Build Llama.cpp manually
         run: |
-          # 这是一个关键步骤：编译 C++ 核心库
-          # 1. 赋予脚本执行权限
-          chmod +x build-xcframework_cpu.sh
+          # 1. 进入 llama.cpp 子目录 (这是关键！)
+          cd llmfarm_core.swift/llama.cpp
           
-          # 2. 运行编译脚本
-          echo "Starting llama build script..."
-          ./build-xcframework_cpu.sh
+          echo "Current directory: $(pwd)"
+          ls -F # 调试用：列出文件确保 CMakeLists.txt 存在
           
-          # 3. 验证并修复路径 (如果脚本生成的路径和 Xcode 预期的不一致)
-          # 错误日志提示 Xcode 在找: llmfarm_core.swift/llama.cpp/build-apple/llama.xcframework
+          # 2. 创建构建目录
+          mkdir -p build-ios
+          cd build-ios
           
-          TARGET_DIR="llmfarm_core.swift/llama.cpp/build-apple"
-          mkdir -p "$TARGET_DIR"
-          
-          # 检查根目录是否生成了 llama_cpu.xcframework 或者 llama.xcframework
-          if [ -d "llama_cpu.xcframework" ]; then
-            echo "Found llama_cpu.xcframework, copying to target..."
-            cp -r llama_cpu.xcframework "$TARGET_DIR/llama.xcframework"
-          elif [ -d "llama.xcframework" ]; then
-             echo "Found llama.xcframework, copying to target..."
-             cp -r llama.xcframework "$TARGET_DIR/llama.xcframework"
-          else
-             echo "Warning: Standard framework not found in root. Checking sub-directories..."
-             # 尝试在常见的构建目录查找
-             find . -name "llama.xcframework" -type d
-          fi
-          
-          # 再次列出目标目录，确保文件存在
-          ls -R "$TARGET_DIR"
+          # 3. 使用 CMake 生成 iOS 工程
+          # -G Xcode: 生成 Xcode 项目
+          # -DCMAKE_SYSTEM_NAME=iOS: 指定 iOS 平台
+          # -DCMAKE_OSX_ARCHITECTURES=arm64: 指定架构为 arm64 (真机)
+          # -DLLAMA_BUILD_SERVER=OFF: 关闭服务端构建加快速度
+          cmake .. \
+            -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+            -DLLAMA_BUILD_SERVER=OFF \
+            -DLLAMA_METAL=ON
 
-      - name: Build Project (No Signing)
+          # 4. 编译 llama 目标
+          cmake --build . --config Release --target llama
+          
+          # 5. 准备打包 Framework
+          # 我们需要把编译出来的 libllama.a 伪装成 Xcode 需要的结构
+          cd ..
+          
+          # 定义目标输出目录 (Xcode 报错时寻找的那个目录)
+          OUTPUT_DIR="build-apple"
+          mkdir -p "$OUTPUT_DIR"
+          
+          # 如果编译成功，build-ios/Release-iphoneos/ 下应该有库文件
+          LIB_PATH="build-ios/Release-iphoneos/libllama.a"
+          
+          if [ -f "$LIB_PATH" ]; then
+            echo "Library found at $LIB_PATH"
+            
+            # 手动创建 XCFramework 结构 (因为直接编译可能只出了 .a)
+            # 这是一个简化的修复方案，欺骗 Xcode 让他以为这是个 Framework
+            mkdir -p "$OUTPUT_DIR/llama.xcframework/ios-arm64"
+            cp "$LIB_PATH" "$OUTPUT_DIR/llama.xcframework/ios-arm64/llama"
+            
+            # 还需要创建一个 Info.plist 让它被识别为 Framework
+            cat > "$OUTPUT_DIR/llama.xcframework/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>AvailableLibraries</key>
+            <array>
+              <dict>
+                <key>BinaryPath</key>
+                <string>llama</string>
+                <key>LibraryIdentifier</key>
+                <string>ios-arm64</string>
+                <key>LibraryPath</key>
+                <string>llama</string>
+                <key>SupportedArchitectures</key>
+                <array>
+                  <string>arm64</string>
+                </array>
+                <key>SupportedPlatform</key>
+                <string>ios</string>
+              </dict>
+            </array>
+            <key>CFBundlePackageType</key>
+            <string>XFWK</string>
+            <key>XCFrameworkFormatVersion</key>
+            <string>1.0</string>
+          </dict>
+          </plist>
+          EOF
+            
+            echo "Successfully created manual XCFramework at $OUTPUT_DIR/llama.xcframework"
+          else
+            echo "Error: Build failed, library not found at $LIB_PATH"
+            ls -R build-ios
+            exit 1
+          fi
+
+      - name: Build Main Project (No Signing)
         run: |
           mkdir build
           
@@ -67,7 +121,7 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            -skipMacroValidation # 跳过宏验证，防止某些 Swift 宏报错
+            -skipMacroValidation
 
       - name: Package IPA
         run: |
