@@ -1,0 +1,74 @@
+name: Build LLMFarm Unsigned IPA
+
+# 手动触发构建（想编译时再运行）
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # 使用带 Xcode 的 macOS 环境
+    runs-on: macos-latest
+    
+    steps:
+      # 拉取仓库代码到云端
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      # 安装 CocoaPods 依赖（该项目有 Podfile，必须这步）
+      - name: Install CocoaPods and Dependencies
+        run: |
+          pod install --repo-update
+          
+      # 编译并导出未签名 IPA（核心步骤，已适配 LLMFarm）
+      - name: Build and Export Unsigned IPA
+        run: |
+          # LLMFarm 项目固定参数，无需修改
+          PROJECT_NAME="LLMFarm"
+          SCHEME_NAME="LLMFarm"
+          PROJECT_FILE="${PROJECT_NAME}.xcodeproj"
+          
+          # 清理编译缓存
+          xcodebuild clean -project $PROJECT_FILE -scheme $SCHEME_NAME -configuration Release
+          
+          # 编译项目（禁用签名）
+          xcodebuild archive \
+            -project $PROJECT_FILE \
+            -scheme $SCHEME_NAME \
+            -configuration Release \
+            -archivePath ./build/LLMFarm.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+          
+          # 导出未签名 IPA
+          xcodebuild -exportArchive \
+            -archivePath ./build/LLMFarm.xcarchive \
+            -exportPath ./build/IPA \
+            -exportOptionsPlist <(cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>development</string>
+  <key>signingStyle</key>
+  <string>manual</string>
+  <key>stripSwiftSymbols</key>
+  <false/>
+  <key>teamID</key>
+  <string>XXXX</string>
+  <key>compileBitcode</key>
+  <false/>
+</dict>
+</plist>
+EOF
+)
+          
+      # 上传 IPA 供下载
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMFarm-Unsigned-IPA
+          path: ./build/IPA/*.ipa
