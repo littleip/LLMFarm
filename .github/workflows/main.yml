@@ -30,6 +30,10 @@ jobs:
       - name: Show Xcode Version
         run: xcodebuild -version
 
+      - name: List Available Schemes
+        run: |
+          xcodebuild -list -project LLMFarm.xcodeproj
+
       - name: Build llama.xcframework
         run: |
           chmod +x build-xcframework_cpu.sh
@@ -39,7 +43,7 @@ jobs:
         run: |
           xcodebuild archive \
             -project LLMFarm.xcodeproj \
-            -scheme LLMFarm \
+            -scheme $(xcodebuild -list -project LLMFarm.xcodeproj | awk '/Schemes:/,/$/' | grep -v "Schemes:" | grep -v "^$" | head -1 | xargs) \
             -configuration ${{ inputs.build_type }} \
             -archivePath build/LLMFarm.xcarchive \
             -destination 'generic/platform=iOS' \
