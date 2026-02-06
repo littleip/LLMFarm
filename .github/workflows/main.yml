@@ -30,10 +30,14 @@ jobs:
       - name: Show Xcode Version
         run: xcodebuild -version
 
+      - name: List Available Schemes
+        run: |
+          xcodebuild -list -project LLMFarm.xcodeproj
+
       - name: Build Archive (No Signing)
         run: |
           xcodebuild archive \
-            -workspace LLMFarm.xcworkspace \
+            -project LLMFarm.xcodeproj \
             -scheme LLMFarm \
             -configuration ${{ inputs.build_type }} \
             -archivePath build/LLMFarm.xcarchive \
