@@ -32,9 +32,10 @@ jobs:
           mkdir -p build-ios
           cd build-ios
           
-          # 3. 配置 CMake (修复 CURL 错误)
-          # 新增: -DLLAMA_CURL=OFF (禁用 CURL)
-          # 修改: -DGGML_METAL=ON (替代过期的 LLAMA_METAL)
+          # 3. 配置 CMake (核心修复点)
+          # -DLLAMA_BUILD_EXAMPLES=OFF: 关闭示例编译 (解决报错的关键)
+          # -DLLAMA_BUILD_TESTS=OFF: 关闭测试
+          # -DLLAMA_CURL=OFF: 关闭 CURL 依赖
           cmake .. \
             -G Xcode \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -43,18 +44,19 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
             -DLLAMA_BUILD_SERVER=OFF \
             -DLLAMA_CURL=OFF \
-            -DGGML_METAL=ON
+            -DGGML_METAL=ON \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TESTS=OFF
 
           # 4. 编译 llama 目标
           cmake --build . --config Release --target llama
           
-          # 5. 准备打包 Framework (手动修复逻辑)
+          # 5. 准备打包 Framework
           cd ..
           OUTPUT_DIR="build-apple"
           mkdir -p "$OUTPUT_DIR"
           
           # 查找生成的静态库
-          # 注意：新版 cmake 生成路径可能会变，多找几个地方
           LIB_PATH=$(find build-ios -name "libllama.a" | head -n 1)
           
           if [ -f "$LIB_PATH" ]; then
@@ -105,7 +107,6 @@ jobs:
         run: |
           mkdir build
           
-          # 尝试编译，如果因为 Swift 宏或者其他小问题失败，尝试忽略
           xcodebuild build \
             -scheme LLMFarm \
             -destination "generic/platform=iOS" \
