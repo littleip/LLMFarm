@@ -60,7 +60,7 @@ jobs:
         run: |
           xcodebuild archive \
             -project LLMFarm.xcodeproj \
-            -scheme $(xcodebuild -list -project LLMFarm.xcodeproj | awk '/Schemes:/,/$/' | grep -v "Schemes:" | grep -v "^$" | head -1 | xargs) \
+            -scheme LLMFarm_Release \
             -configuration ${{ inputs.build_type }} \
             -archivePath build/LLMFarm.xcarchive \
             -destination 'generic/platform=iOS' \
